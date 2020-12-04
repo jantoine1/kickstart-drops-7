@@ -4263,6 +4263,9 @@ function drupal_region_class($region) {
  *     a JavaScript file. Defaults to TRUE.
  *   - preprocess: If TRUE and JavaScript aggregation is enabled, the script
  *     file will be aggregated. Defaults to TRUE.
+ *   - browsers: An array containing information specifying which browsers
+ *     should load the JavaScript item. See
+ *     drupal_pre_render_conditional_comments() for details.
  *
  * @return
  *   The current array of JavaScript files, settings, and in-line code,
@@ -4326,6 +4329,7 @@ function drupal_add_js($data = NULL, $options = NULL) {
           'group' => JS_LIBRARY,
           'every_page' => TRUE,
           'weight' => 0,
+          'browsers' => array(),
         ),
         'misc/drupal.js' => array(
           'data' => 'misc/drupal.js',
@@ -4338,6 +4342,7 @@ function drupal_add_js($data = NULL, $options = NULL) {
           'preprocess' => TRUE,
           'cache' => TRUE,
           'defer' => FALSE,
+          'browsers' => array(),
         ),
       );
       $javascript = drupal_array_merge_deep($javascript, $default_javascript);
@@ -4388,6 +4393,7 @@ function drupal_js_defaults($data = NULL) {
     'preprocess' => TRUE,
     'version' => NULL,
     'data' => $data,
+    'browsers' => array(),
   );
 }
 
@@ -4543,9 +4549,19 @@ function drupal_pre_render_scripts(array $elements) {
   foreach ($elements['#items'] as $item) {
     $query_string =  empty($item['version']) ? $default_query_string : $js_version_string . $item['version'];
 
+    $js_element = $element;
+
+    // Ensure browser defaults are populated.
+    $item['browsers'] += array(
+      'IE' => TRUE,
+      '!IE' => TRUE,
+    );
+
+    // Generate a unique key that represents browsers so they can be grouped.
+    $browsers_key = ($item['browsers']['IE'] ? drupal_html_class($item['browsers']['IE']) : '0') . '_' . ($item['browsers']['!IE'] ? '1' : '0');
+
     switch ($item['type']) {
       case 'setting':
-        $js_element = $element;
         $js_element['#value_prefix'] = $embed_prefix;
         $js_element['#value'] = 'jQuery.extend(Drupal.settings, ' . drupal_json_encode(drupal_array_merge_deep_array($item['data'])) . ");";
         $js_element['#value_suffix'] = $embed_suffix;
@@ -4553,47 +4569,59 @@ function drupal_pre_render_scripts(array $elements) {
         break;
 
       case 'inline':
-        $js_element = $element;
         if ($item['defer']) {
           $js_element['#attributes']['defer'] = 'defer';
         }
         $js_element['#value_prefix'] = $embed_prefix;
         $js_element['#value'] = $item['data'];
         $js_element['#value_suffix'] = $embed_suffix;
+        $js_element['#browsers'] = $item['browsers'];
         $scripts[$index++] = $js_element;
         break;
 
       case 'file':
-        $js_element = $element;
         if (!$item['preprocess'] || !$preprocess_js) {
           if ($item['defer']) {
             $js_element['#attributes']['defer'] = 'defer';
           }
           $query_string_separator = (strpos($item['data'], '?') !== FALSE) ? '&' : '?';
           $js_element['#attributes']['src'] = file_create_url($item['data']) . $query_string_separator . ($item['cache'] ? $query_string : REQUEST_TIME);
-          $scripts[$index++] = $js_element;
+
+          $js_element['#browsers'] = $item['browsers'];
+          // If item renders in all browsers, then there is no need for
+          // conditional comments. Increase and use the index as the key.
+          if ($item['browsers']['IE'] === TRUE && $item['browsers']['!IE']) {
+            $scripts[$index++] = $js_element;
+          }
+          // If item renders for specific browsers, group by browsers key and
+          // append each item so they are grouped properly.
+          else {
+            $scripts[$browsers_key][] = $js_element;
+          }
+
         }
         else {
           // By increasing the index for each aggregated file, we maintain
           // the relative ordering of JS by weight. We also set the key such
-          // that groups are split by items sharing the same 'group' value and
-          // 'every_page' flag. While this potentially results in more aggregate
-          // files, it helps make each one more reusable across a site visit,
-          // leading to better front-end performance of a website as a whole.
-          // See drupal_add_js() for details.
-          $key = 'aggregate_' . $item['group'] . '_' . $item['every_page'] . '_' . $index;
+          // that groups are split by items sharing the same 'group' value
+          // 'every_page' flag and browser conditions. While this potentially
+          // results in more aggregate files, it helps make each one more
+          // reusable across a site visit, leading to better front-end
+          // performance of a website as a whole. See drupal_add_js() for more
+          // details.
+          $key = $item['type'] . '_' . $item['every_page'] . '_' . $browsers_key . '_' . $index;
           $scripts[$key] = '';
           $files[$key][$item['data']] = $item;
         }
         break;
 
       case 'external':
-        $js_element = $element;
         // Preprocessing for external JavaScript files is ignored.
         if ($item['defer']) {
           $js_element['#attributes']['defer'] = 'defer';
         }
         $js_element['#attributes']['src'] = $item['data'];
+        $js_element['#browsers'] = $item['browsers'];
         $scripts[$index++] = $js_element;
         break;
     }
@@ -4609,6 +4637,11 @@ function drupal_pre_render_scripts(array $elements) {
         $preprocess_file = file_create_url($uri);
         $js_element = $element;
         $js_element['#attributes']['src'] = $preprocess_file;
+        // The key contains browsers array as part of it's unique value, use
+        // the first file set's value for this preprocessed version.
+        $file_set_values = array_values($file_set);
+        $item = array_shift($file_set_values);
+        $js_element['#browsers'] = $item['browsers'];
         $scripts[$key] = $js_element;
       }
     }
@@ -6670,30 +6703,41 @@ function element_children(&$elements, $sort = FALSE) {
   $sort = isset($elements['#sorted']) ? !$elements['#sorted'] : $sort;
 
   // Filter out properties from the element, leaving only children.
-  $children = array();
+  $count = count($elements);
+  $child_weights = array();
+  $i = 0;
   $sortable = FALSE;
   foreach ($elements as $key => $value) {
     if (is_int($key) || $key === '' || $key[0] !== '#') {
-      $children[$key] = $value;
       if (is_array($value) && isset($value['#weight'])) {
+        $weight = $value['#weight'];
         $sortable = TRUE;
       }
+      else {
+        $weight = 0;
+      }
+      // Support weights with up to three digit precision and conserve the
+      // insertion order.
+      $child_weights[$key] = floor($weight * 1000) + $i / $count;
     }
+    $i++;
   }
+
   // Sort the children if necessary.
   if ($sort && $sortable) {
-    uasort($children, 'element_sort');
+    asort($child_weights);
     // Put the sorted children back into $elements in the correct order, to
     // preserve sorting if the same element is passed through
     // element_children() twice.
-    foreach ($children as $key => $child) {
+    foreach ($child_weights as $key => $weight) {
+      $value = $elements[$key];
       unset($elements[$key]);
-      $elements[$key] = $child;
+      $elements[$key] = $value;
     }
     $elements['#sorted'] = TRUE;
   }
 
-  return array_keys($children);
+  return array_keys($child_weights);
 }
 
 /**
@@ -8270,14 +8314,14 @@ function entity_uri($entity_type, $entity) {
     return NULL;
   }
 
-  // Invoke the callback to get the URI. If there is no callback, return NULL.
   if (isset($uri_callback) && function_exists($uri_callback)) {
-    $uri = $uri_callback($entity);
-    // Pass the entity data to url() so that alter functions do not need to
-    // lookup this entity again.
-    $uri['options']['entity_type'] = $entity_type;
-    $uri['options']['entity'] = $entity;
-    return $uri;
+    if ($uri = $uri_callback($entity)) {
+      // Pass the entity data to url() so that alter functions do not need to
+      // lookup this entity again.
+      $uri['options']['entity_type'] = $entity_type;
+      $uri['options']['entity'] = $entity;
+      return $uri;
+    }
   }
 }
 

@@ -1802,30 +1802,96 @@ class JavaScriptTestCase extends DrupalWebTestCase {
     drupal_add_js('misc/authorize.js', array('every_page' => TRUE));
     drupal_add_js('misc/autocomplete.js');
     drupal_add_js('misc/batch.js', array('every_page' => TRUE));
+    drupal_add_js('misc/collapse.js', array('browsers' => array(
+      'IE' => 'lt IE 8',
+      '!IE' => FALSE,
+    )));
+    drupal_add_js('misc/states.js', array('browsers' => array(
+      'IE' => 'lte IE 6',
+      '!IE' => FALSE,
+    )));
+    drupal_add_js('misc/textarea.js', array('browsers' => array(
+      'IE' => 'gt IE 7',
+      '!IE' => TRUE,
+    )));
+    drupal_add_js('misc/progress.js', array('browsers' => array(
+      'IE' => 'lt IE 8',
+      '!IE' => FALSE,
+    )));
     $javascript = drupal_get_js();
     $expected = implode("\n", array(
       '<script type="text/javascript" src="' . file_create_url('misc/authorize.js') . '?' . $default_query_string . '"></script>',
       '<script type="text/javascript" src="' . file_create_url('misc/batch.js') . '?' . $default_query_string . '"></script>',
       '<script type="text/javascript" src="' . file_create_url('misc/ajax.js') . '?' . $default_query_string . '"></script>',
       '<script type="text/javascript" src="' . file_create_url('misc/autocomplete.js') . '?' . $default_query_string . '"></script>',
+      "\n<!--[if lt IE 8]>",
+      '<script type="text/javascript" src="' . file_create_url('misc/collapse.js') . '?' . $default_query_string . '"></script>',
+      "<![endif]-->\n",
+      "<!--[if lt IE 8]>",
+      '<script type="text/javascript" src="' . file_create_url('misc/progress.js') . '?' . $default_query_string . '"></script>',
+      "<![endif]-->\n",
+      "<!--[if lte IE 6]>",
+      '<script type="text/javascript" src="' . file_create_url('misc/states.js') . '?' . $default_query_string . '"></script>',
+      "<![endif]-->\n",
+      "<!--[if gt IE 7]><!-->",
+      '<script type="text/javascript" src="' . file_create_url('misc/textarea.js') . '?' . $default_query_string . '"></script>',
+      "<!--<![endif]-->",
     ));
-    $this->assertTrue(strpos($javascript, $expected) > 0, t('Unaggregated JavaScript is added in the expected group order.'));
+    $this->assertTrue(strpos($javascript, $expected) !== FALSE, t('Unaggregated JavaScript is added in the expected group order.'));
 
-    // Now ensure that with aggregation on, one file is made for the
-    // 'every_page' files, and one file is made for the others.
-    drupal_static_reset('drupal_add_js');
+    // Enable aggregation.
     variable_set('preprocess_js', 1);
+
+    // Ensure a file is made for the 'every_page' files, one for different
+    // browser conditions and another for the rest.
+    drupal_static_reset('drupal_add_js');
+
+    // drupal_add_js() adds jquery.js, jquery.once.js and drupal.js if it's
+    // array is empty. This affects expect aggregation values, inject a fake
+    // settings array so they don't get added.
+    $settings = drupal_js_defaults(array());
+    $settings['type'] = 'setting';
+    $settings['group'] = JS_LIBRARY;
+    $drupal_add_js = &drupal_static('drupal_add_js', array());
+    $drupal_add_js['settings'] = $settings;
+
+    // Duplicate order and options above, but check for aggregated values.
     drupal_add_js('misc/ajax.js');
     drupal_add_js('misc/authorize.js', array('every_page' => TRUE));
     drupal_add_js('misc/autocomplete.js');
     drupal_add_js('misc/batch.js', array('every_page' => TRUE));
+    drupal_add_js('misc/collapse.js', array('browsers' => array(
+      'IE' => 'lt IE 8',
+      '!IE' => FALSE,
+    )));
+    drupal_add_js('misc/states.js', array('browsers' => array(
+      'IE' => 'lte IE 6',
+      '!IE' => FALSE,
+    )));
+    drupal_add_js('misc/textarea.js', array('browsers' => array(
+      'IE' => 'gt IE 7',
+      '!IE' => TRUE,
+    )));
+    drupal_add_js('misc/progress.js', array('browsers' => array(
+      'IE' => 'lt IE 8',
+      '!IE' => FALSE,
+    )));
     $js_items = drupal_add_js();
     $javascript = drupal_get_js();
     $expected = implode("\n", array(
       '<script type="text/javascript" src="' . file_create_url(drupal_build_js_cache(array('misc/authorize.js' => $js_items['misc/authorize.js'], 'misc/batch.js' => $js_items['misc/batch.js']))) . '"></script>',
       '<script type="text/javascript" src="' . file_create_url(drupal_build_js_cache(array('misc/ajax.js' => $js_items['misc/ajax.js'], 'misc/autocomplete.js' => $js_items['misc/autocomplete.js']))) . '"></script>',
+      "\n<!--[if lt IE 8]>",
+      '<script type="text/javascript" src="' . file_create_url(drupal_build_js_cache(array('misc/collapse.js' => $js_items['misc/collapse.js'], 'misc/progress.js' => $js_items['misc/progress.js']))) . '"></script>',
+      "<![endif]-->\n",
+      "<!--[if lte IE 6]>",
+      '<script type="text/javascript" src="' . file_create_url(drupal_build_js_cache(array('misc/states.js' => $js_items['misc/states.js']))) . '"></script>',
+      "<![endif]-->\n",
+      "<!--[if gt IE 7]><!-->",
+      '<script type="text/javascript" src="' . file_create_url(drupal_build_js_cache(array('misc/textarea.js' => $js_items['misc/textarea.js']))) . '"></script>',
+      "<!--<![endif]-->",
     ));
-    $this->assertTrue(strpos($javascript, $expected) > 0, t('JavaScript is aggregated in the expected groups and order.'));
+    $this->assertTrue(strpos($javascript, $expected) !== FALSE, t('JavaScript is aggregated in the expected groups and order.'));
   }
 
   /**
@@ -2120,6 +2186,32 @@ class DrupalRenderTestCase extends DrupalWebTestCase {
 
     // The elements should appear in output in the same order as the array.
     $this->assertTrue(strpos($output, $second) < strpos($output, $first), 'Elements were not sorted.');
+
+    // The order of children with same weight should be preserved.
+    $element_mixed_weight = array(
+      'child5' => array('#weight' => 10),
+      'child3' => array('#weight' => -10),
+      'child1' => array(),
+      'child4' => array('#weight' => 10),
+      'child2' => array(),
+      'child6' => array('#weight' => 10),
+      'child9' => array(),
+      'child8' => array('#weight' => 10),
+      'child7' => array(),
+    );
+
+    $expected = array(
+      'child3',
+      'child1',
+      'child2',
+      'child9',
+      'child7',
+      'child5',
+      'child4',
+      'child6',
+      'child8',
+      );
+    $this->assertEqual($expected, element_children($element_mixed_weight, TRUE), 'Order of elements with the same weight is preserved.');
   }
 
   /**

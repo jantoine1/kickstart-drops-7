@@ -1,6 +1,8 @@
 api = 2
 core = 7.x
-projects[drupal][version] = 7.72
+projects[drupal][type] = "core"
+projects[drupal][download][type] = "git"
+projects[drupal][download][url] = "https://github.com/pantheon-systems/drops-7.git"
 
 ; Patches for Core
 ; This patch will not apply, and there shouldn't be any new installs happening, so skip this patch.
